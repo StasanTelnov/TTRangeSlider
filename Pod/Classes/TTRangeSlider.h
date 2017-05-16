@@ -126,6 +126,31 @@ IB_DESIGNABLE
 @property (nonatomic, strong) UIColor *handleColor;
 
 /**
+ *Handle slider with custom shadow color. Default value is equal to tintColor
+ */
+@property (nonatomic, strong) IBInspectable UIColor *handleShadowColor;
+
+/**
+ *Handle slider with custom shadow radius. Default value is 1.0
+ */
+@property (nonatomic, assign) IBInspectable CGFloat handleShadowRadius;
+
+/**
+ *Handle slider with custom shadow offset. Default value is 0,0
+ */
+@property (nonatomic, assign) IBInspectable CGSize handleShadowOffset;
+
+/**
+ *Handle slider with custom shadow opacity. Default value is 0.0, but automactically change to 1.0, if changed other shadow property
+ */
+@property (nonatomic, assign) IBInspectable float handleShadowOpacity;
+
+/**
+ *Handle slider with custom shadow path.
+ */
+@property (nonatomic, assign) IBInspectable CGPathRef handleShadowPath;
+
+/**
  *Handle slider with custom border color, you can set custom border color for your handle
  */
 @property (nonatomic, strong) UIColor *handleBorderColor;
