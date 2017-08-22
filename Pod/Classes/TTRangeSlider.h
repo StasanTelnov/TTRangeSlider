@@ -10,6 +10,10 @@
 IB_DESIGNABLE
 @interface TTRangeSlider : UIControl <UIGestureRecognizerDelegate>
 
+- (void)setManualSelectedMinimum:(float)selectedMinimum;
+
+- (void)setManualSelectedMaximum:(float)selectedMaximum;
+
 /**
  * Optional delegate.
  */
@@ -42,6 +46,16 @@ IB_DESIGNABLE
  * You can override this default here by supplying your own NSNumberFormatter. For example, you could supply an NSNumberFormatter that has a currency style, or a prefix or suffix.
  * If this property is nil, the default decimal format will be used. Note: If you want no labels at all, please use the hideLabels flag. */
 @property (nonatomic, strong) NSNumberFormatter *numberFormatterOverride;
+
+/**
+ * Moving labels with handler. YES = labels position will be static. NO = labels will be moved with handler. Default is NO.
+ */
+@property (nonatomic, assign) IBInspectable BOOL staticLabels;
+
+/**
+ * Position of slider and elements. If YES, that slider located on bottom this view, else - on center. Default is NO.
+ */
+@property (nonatomic, assign) IBInspectable BOOL isBottomPosition;
 
 /**
  * Hides the labels above the slider controls. YES = labels will be hidden. NO = labels will be shown. Default is NO.

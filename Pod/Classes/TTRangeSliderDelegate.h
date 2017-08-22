@@ -28,4 +28,14 @@
  */
 - (void)didStartTouchesInRangeSlider:(TTRangeSlider *)sender;
 
+/**
+ * Called when the user has started manual editing values in text field
+ */
+- (void)didStartManualEditing:(TTRangeSlider *)sender;
+
+/**
+ * Called when the user has ended manual editing values in text field
+ */
+- (void)didEndManualEditing:(TTRangeSlider *)sender;
+
 @end

@@ -8,7 +8,7 @@
 const int HANDLE_TOUCH_AREA_EXPANSION = -30; //expand the touch area of the handle by this much (negative values increase size) so that you don't have to touch right on the handle to activate it.
 const float TEXT_HEIGHT = 14;
 
-@interface TTRangeSlider ()
+@interface TTRangeSlider ()<UITextFieldDelegate>
 
 @property (nonatomic, strong) CALayer *sliderLine;
 @property (nonatomic, strong) CALayer *sliderLineBetweenHandles;
@@ -17,6 +17,7 @@ const float TEXT_HEIGHT = 14;
 @property (nonatomic, assign) BOOL leftHandleSelected;
 @property (nonatomic, strong) CALayer *rightHandle;
 @property (nonatomic, assign) BOOL rightHandleSelected;
+@property (nonatomic, assign) CGFloat savedStep;
 
 @property (nonatomic, strong) CATextLayer *minLabel;
 @property (nonatomic, strong) CATextLayer *maxLabel;
@@ -24,7 +25,12 @@ const float TEXT_HEIGHT = 14;
 @property (nonatomic, assign) CGSize minLabelTextSize;
 @property (nonatomic, assign) CGSize maxLabelTextSize;
 
+@property (nonatomic, assign) NSInteger numberOfStepFractionDigits;
+
 @property (nonatomic, strong) NSNumberFormatter *decimalNumberFormatter; // Used to format values if formatType is YLRangeSliderFormatTypeDecimal
+
+@property (nonatomic, strong) UITextField *minTextField;
+@property (nonatomic, strong) UITextField *maxTextField;
 
 // strong reference needed for UIAccessibilityContainer
 // see http://stackoverflow.com/questions/13462046/custom-uiview-not-showing-accessibility-on-voice-over
@@ -50,6 +56,8 @@ static const CGFloat kLabelsFontSize = 12.0f;
 //do all the setup in a common place, as there can be two initialisers called depending on if storyboards or code are used. The designated initialiser isn't always called :|
 - (void)initialiseControl {
     //defaults:
+    
+    _numberOfStepFractionDigits = 0;
     _minValue = 0;
     _selectedMinimum = 10;
     _maxValue = 100;
@@ -65,6 +73,7 @@ static const CGFloat kLabelsFontSize = 12.0f;
     _enableStep = NO;
     _step = 0.1f;
     
+    _staticLabels = NO;
     _hideLabels = NO;
     
     _handleDiameter = 16.0;
@@ -74,6 +83,7 @@ static const CGFloat kLabelsFontSize = 12.0f;
     
     _handleBorderWidth = 0.0;
     _handleBorderColor = self.tintColor;
+    _isBottomPosition = NO;
     
     _labelPadding = 8.0;
     
@@ -153,7 +163,23 @@ static const CGFloat kLabelsFontSize = 12.0f;
         self.maxLabelAccessibilityHint = @"Maximum value in slider";
     }
     
-    [self refresh];
+    self.minTextField = [UITextField new];
+    self.minTextField.textAlignment = NSTextAlignmentCenter;
+    self.minTextField.keyboardType = UIKeyboardTypeNumberPad;
+    self.minTextField.returnKeyType = UIReturnKeyDone;
+    self.minTextField.delegate = self;
+    [self.minTextField addTarget:self action:@selector(textFieldValueChanged:) forControlEvents:UIControlEventEditingChanged];
+    [self addSubview:self.minTextField];
+    
+    self.maxTextField = [UITextField new];
+    self.maxTextField.textAlignment = NSTextAlignmentCenter;
+    self.maxTextField.keyboardType = UIKeyboardTypeNumberPad;
+    self.maxTextField.returnKeyType = UIReturnKeyDone;
+    self.maxTextField.delegate = self;
+    [self.maxTextField addTarget:self action:@selector(textFieldValueChanged:) forControlEvents:UIControlEventEditingChanged];
+    [self addSubview:self.maxTextField];
+
+    [self refreshWithConsideringStep:YES];
 }
 
 - (void)layoutSubviews {
@@ -162,9 +188,12 @@ static const CGFloat kLabelsFontSize = 12.0f;
     //positioning for the slider line
     float barSidePadding = 16.0f;
     CGRect currentFrame = self.frame;
-    float yMiddle = currentFrame.size.height/2.0;
-    CGPoint lineLeftSide = CGPointMake(barSidePadding, yMiddle);
-    CGPoint lineRightSide = CGPointMake(currentFrame.size.width-barSidePadding, yMiddle);
+    float yPosition = currentFrame.size.height/2.0;
+    if (self.isBottomPosition) {
+        yPosition = currentFrame.size.height - barSidePadding;
+    }
+    CGPoint lineLeftSide = CGPointMake(barSidePadding, yPosition);
+    CGPoint lineRightSide = CGPointMake(currentFrame.size.width-barSidePadding, yPosition);
     self.sliderLine.frame = CGRectMake(lineLeftSide.x, lineLeftSide.y, lineRightSide.x-lineLeftSide.x, self.lineHeight);
     
     self.sliderLine.cornerRadius = self.lineHeight / 2.0;
@@ -299,7 +328,6 @@ static const CGFloat kLabelsFontSize = 12.0f;
     CGSize minLabelTextSize = self.minLabelTextSize;
     CGSize maxLabelTextSize = self.maxLabelTextSize;
     
-    
     self.minLabel.frame = CGRectMake(0, 0, minLabelTextSize.width, minLabelTextSize.height);
     self.maxLabel.frame = CGRectMake(0, 0, maxLabelTextSize.width, maxLabelTextSize.height);
     
@@ -307,36 +335,94 @@ static const CGFloat kLabelsFontSize = 12.0f;
     float newRightMostXInMinLabel = newMinLabelCenter.x + minLabelTextSize.width/2;
     float newSpacingBetweenTextLabels = newLeftMostXInMaxLabel - newRightMostXInMinLabel;
     
-    if (self.disableRange == YES || newSpacingBetweenTextLabels > minSpacingBetweenLabels) {
-        self.minLabel.position = newMinLabelCenter;
-        self.maxLabel.position = newMaxLabelCenter;
-    }
-    else {
-        float increaseAmount = minSpacingBetweenLabels - newSpacingBetweenTextLabels;
-        newMinLabelCenter = CGPointMake(newMinLabelCenter.x - increaseAmount/2, newMinLabelCenter.y);
-        newMaxLabelCenter = CGPointMake(newMaxLabelCenter.x + increaseAmount/2, newMaxLabelCenter.y);
-        self.minLabel.position = newMinLabelCenter;
-        self.maxLabel.position = newMaxLabelCenter;
+    if (self.staticLabels) {
+        CGFloat labelsY = self.leftHandle.frame.origin.y - self.minLabel.frame.size.height - padding;
+        CGFloat minLabelX = self.sliderLine.frame.origin.x - self.handleDiameter / 2;
+        CGFloat maxLabelX = self.sliderLine.frame.origin.x + self.sliderLine.frame.size.width - self.maxLabel.frame.size.width + self.handleDiameter / 2;
         
-        //Update x if they are still in the original position
-        if (self.minLabel.position.x == self.maxLabel.position.x && self.leftHandle != nil) {
-            self.minLabel.position = CGPointMake(leftHandleCentre.x, self.minLabel.position.y);
-            self.maxLabel.position = CGPointMake(leftHandleCentre.x + self.minLabel.frame.size.width/2 + minSpacingBetweenLabels + self.maxLabel.frame.size.width/2, self.maxLabel.position.y);
+        self.minLabel.frame = CGRectMake(minLabelX, labelsY, self.minLabel.frame.size.width, self.minLabel.frame.size.height);
+        self.maxLabel.frame = CGRectMake(maxLabelX, labelsY, self.maxLabel.frame.size.width, self.maxLabel.frame.size.height);
+    } else {
+        if (self.disableRange == YES || newSpacingBetweenTextLabels > minSpacingBetweenLabels) {
+            self.minLabel.position = newMinLabelCenter;
+            self.maxLabel.position = newMaxLabelCenter;
+        }
+        else {
+            float increaseAmount = minSpacingBetweenLabels - newSpacingBetweenTextLabels;
+            if (self.staticLabels) {
+                newMinLabelCenter = CGPointMake(self.sliderLine.frame.origin.x, newMinLabelCenter.y);
+                newMaxLabelCenter = CGPointMake(self.sliderLine.frame.origin.x + self.sliderLine.frame.size.width - self.minLabel.frame.size.width, newMaxLabelCenter.y);
+            }else {
+                newMinLabelCenter = CGPointMake(newMinLabelCenter.x - increaseAmount/2, newMinLabelCenter.y);
+                newMaxLabelCenter = CGPointMake(newMaxLabelCenter.x + increaseAmount/2, newMaxLabelCenter.y);
+            }
+            self.minLabel.position = newMinLabelCenter;
+            self.maxLabel.position = newMaxLabelCenter;
+            
+            if (!self.staticLabels) {
+                //Update x if they are still in the original position
+                if (self.minLabel.position.x == self.maxLabel.position.x && self.leftHandle != nil) {
+                    self.minLabel.position = CGPointMake(leftHandleCentre.x, self.minLabel.position.y);
+                    self.maxLabel.position = CGPointMake(leftHandleCentre.x + self.minLabel.frame.size.width/2 + minSpacingBetweenLabels + self.maxLabel.frame.size.width/2, self.maxLabel.position.y);
+                }
+            }
+            
         }
     }
+    
+    CGFloat topPadding = 24.0;
+    CGFloat widthPadding = 30.0;
+    
+    CGRect minFieldFrame = self.minLabel.frame;
+    CGRect maxFieldFrame = self.maxLabel.frame;
+    minFieldFrame.origin.x -= widthPadding;
+    minFieldFrame.origin.y -= topPadding / 2;
+    minFieldFrame.size.height += topPadding;
+    minFieldFrame.size.width += widthPadding * 2;
+    
+    maxFieldFrame.origin.x -= widthPadding;
+    maxFieldFrame.origin.y -= topPadding / 2;
+    maxFieldFrame.size.height += topPadding;
+    maxFieldFrame.size.width += widthPadding * 2;
+    
+    self.minTextField.frame = minFieldFrame;
+    self.maxTextField.frame = maxFieldFrame;
+//    if (!self.minTextField.isFirstResponder) {
+//        self.minTextField.frame = minFieldFrame;
+//    } else {
+//        self.minTextField.frame = self.minLabel.frame;
+//    }
+//    if (!self.maxTextField.isFirstResponder) {
+//        self.maxTextField.frame = maxFieldFrame;
+//    } else {
+//        self.maxTextField.frame = self.maxLabel.frame;
+//    }
+    
+    self.maxTextField.textColor = self.maxLabelColour;
+    self.minTextField.textColor = self.minLabelColour;
+    if (self.selectedMaximum < self.selectedMinimum) {
+        if ([self.maxTextField isFirstResponder]) {
+            self.maxTextField.textColor = [UIColor redColor];
+        }
+        
+        if ([self.minTextField isFirstResponder]) {
+            self.minTextField.textColor = [UIColor redColor];
+        }
+    }
+    
 }
 
 #pragma mark - Touch Tracking
 
-
 - (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
     CGPoint gesturePressLocation = [touch locationInView:self];
+    [self endEditing:YES];
     
     if (CGRectContainsPoint(CGRectInset(self.leftHandle.frame, HANDLE_TOUCH_AREA_EXPANSION, HANDLE_TOUCH_AREA_EXPANSION), gesturePressLocation) || CGRectContainsPoint(CGRectInset(self.rightHandle.frame, HANDLE_TOUCH_AREA_EXPANSION, HANDLE_TOUCH_AREA_EXPANSION), gesturePressLocation))
     {
         //the touch was inside one of the handles so we're definitely going to start movign one of them. But the handles might be quite close to each other, so now we need to find out which handle the touch was closest too, and activate that one.
         float distanceFromLeftHandle = [self distanceBetweenPoint:gesturePressLocation andPoint:[self getCentreOfRect:self.leftHandle.frame]];
-        float distanceFromRightHandle =[self distanceBetweenPoint:gesturePressLocation andPoint:[self getCentreOfRect:self.rightHandle.frame]];
+        float distanceFromRightHandle = [self distanceBetweenPoint:gesturePressLocation andPoint:[self getCentreOfRect:self.rightHandle.frame]];
         
         if (distanceFromLeftHandle < distanceFromRightHandle && self.disableRange == NO){
             self.leftHandleSelected = YES;
@@ -352,7 +438,7 @@ static const CGFloat kLabelsFontSize = 12.0f;
             }
         }
         
-        if ([self.delegate respondsToSelector:@selector(didStartTouchesInRangeSlider:)]){
+        if ([self.delegate respondsToSelector:@selector(didStartTouchesInRangeSlider:)]) {
             [self.delegate didStartTouchesInRangeSlider:self];
         }
         
@@ -362,22 +448,37 @@ static const CGFloat kLabelsFontSize = 12.0f;
     }
 }
 
-- (void)refresh {
+- (void)refreshWithConsideringStep:(BOOL)withConsideringStep {
     
-    if (self.enableStep && self.step>=0.0f){
-        _selectedMinimum = roundf(self.selectedMinimum/self.step)*self.step;
-        _selectedMaximum = roundf(self.selectedMaximum/self.step)*self.step;
+    if (self.enableStep && self.step >= 1.0f) {
+        _selectedMinimum = roundf(self.selectedMinimum);
+        _selectedMaximum = roundf(self.selectedMaximum);
+        if (withConsideringStep) {
+            _selectedMinimum = roundf(_selectedMinimum / self.step) * self.step;
+            _selectedMaximum = roundf(_selectedMaximum / self.step) * self.step;
+        }
+        
+    } else if (self.enableStep && self.step >= 0.0f &&  self.step <= 1.0f) {
+        
+        NSString *minValue = [self.decimalNumberFormatter stringFromNumber:@(self.selectedMinimum)];
+        minValue = [minValue stringByReplacingOccurrencesOfString:@"[^0-9,.]" withString:@"" options:NSRegularExpressionSearch range:NSMakeRange(0, minValue.length)];
+        
+        NSString *maxValue = [self.decimalNumberFormatter stringFromNumber:@(self.selectedMaximum)];
+        maxValue = [maxValue stringByReplacingOccurrencesOfString:@"[^0-9,.]" withString:@"" options:NSRegularExpressionSearch range:NSMakeRange(0, maxValue.length)];
+        
+        _selectedMinimum = minValue.floatValue;
+        _selectedMaximum = maxValue.floatValue;
     }
     
     float diff = self.selectedMaximum - self.selectedMinimum;
     
     if (self.minDistance != -1 && diff < self.minDistance) {
-        if(self.leftHandleSelected){
+        if(self.leftHandleSelected) {
             _selectedMinimum = self.selectedMaximum - self.minDistance;
         }else{
             _selectedMaximum = self.selectedMinimum + self.minDistance;
         }
-    }else if(self.maxDistance != -1 && diff > self.maxDistance){
+    }else if(self.maxDistance != -1 && diff > self.maxDistance) {
         
         if(self.leftHandleSelected){
             _selectedMinimum = self.selectedMaximum - self.maxDistance;
@@ -404,8 +505,7 @@ static const CGFloat kLabelsFontSize = 12.0f;
     [self updateAccessibilityElements];
     
     //update the delegate
-    if ([self.delegate respondsToSelector:@selector(rangeSlider:didChangeSelectedMinimumValue:andMaximumValue:)] &&
-        (self.leftHandleSelected || self.rightHandleSelected)){
+    if ([self.delegate respondsToSelector:@selector(rangeSlider:didChangeSelectedMinimumValue:andMaximumValue:)]){
         
         [self.delegate rangeSlider:self didChangeSelectedMinimumValue:self.selectedMinimum andMaximumValue:self.selectedMaximum];
     }
@@ -472,6 +572,7 @@ static const CGFloat kLabelsFontSize = 12.0f;
         //the label above the handle will need to move too if the handle changes size
         [self updateLabelPositions];
         
+        
         [CATransaction setCompletionBlock:^{
         }];
         [CATransaction commit];
@@ -484,6 +585,7 @@ static const CGFloat kLabelsFontSize = 12.0f;
         
         //the label above the handle will need to move too if the handle changes size
         [self updateLabelPositions];
+
         
         [CATransaction commit];
     }
@@ -538,19 +640,42 @@ static const CGFloat kLabelsFontSize = 12.0f;
     if (!_decimalNumberFormatter){
         _decimalNumberFormatter = [[NSNumberFormatter alloc] init];
         _decimalNumberFormatter.numberStyle = NSNumberFormatterDecimalStyle;
-        _decimalNumberFormatter.maximumFractionDigits = 0;
+        _decimalNumberFormatter.decimalSeparator = @".";
+        _decimalNumberFormatter.groupingSeparator = @" ";
+        _decimalNumberFormatter.minimumFractionDigits = self.numberOfStepFractionDigits;
+        _decimalNumberFormatter.maximumFractionDigits = self.numberOfStepFractionDigits;
     }
     return _decimalNumberFormatter;
 }
 
+-(void)setStep:(float)step {
+    _step = step;
+    NSNumber *stepNumber = @(_step);
+    NSArray *stepDigits = [stepNumber.stringValue componentsSeparatedByString:@"."];
+    if (stepDigits.count == 2 && !self.savedStep) {
+        self.numberOfStepFractionDigits = [stepDigits.lastObject length];
+    } else {
+        self.numberOfStepFractionDigits = 0;
+    }
+    if ((self.step < 1.0 && !self.savedStep) || (self.savedStep && self.savedStep < 1.0)) {
+        self.minTextField.keyboardType = UIKeyboardTypeDecimalPad;
+        self.maxTextField.keyboardType = UIKeyboardTypeDecimalPad;
+    } else {
+        self.minTextField.keyboardType = UIKeyboardTypeNumberPad;
+        self.maxTextField.keyboardType = UIKeyboardTypeNumberPad;
+    }
+    _decimalNumberFormatter = nil;
+    [self updateLabelValues];
+}
+
 - (void)setMinValue:(float)minValue {
     _minValue = minValue;
-    [self refresh];
+    [self refreshWithConsideringStep:YES];
 }
 
 - (void)setMaxValue:(float)maxValue {
     _maxValue = maxValue;
-    [self refresh];
+    [self refreshWithConsideringStep:YES];
 }
 
 - (void)setSelectedMinimum:(float)selectedMinimum {
@@ -559,7 +684,7 @@ static const CGFloat kLabelsFontSize = 12.0f;
     }
     
     _selectedMinimum = selectedMinimum;
-    [self refresh];
+    [self refreshWithConsideringStep:YES];
 }
 
 - (void)setSelectedMaximum:(float)selectedMaximum {
@@ -568,7 +693,25 @@ static const CGFloat kLabelsFontSize = 12.0f;
     }
     
     _selectedMaximum = selectedMaximum;
-    [self refresh];
+    [self refreshWithConsideringStep:YES];
+}
+
+- (void)setManualSelectedMinimum:(float)selectedMinimum {
+    if (selectedMinimum < self.minValue){
+        selectedMinimum = self.minValue;
+    }
+    
+    _selectedMinimum = selectedMinimum;
+    [self refreshWithConsideringStep:NO];
+}
+
+- (void)setManualSelectedMaximum:(float)selectedMaximum {
+    if (selectedMaximum > self.maxValue){
+        selectedMaximum = self.maxValue;
+    }
+    
+    _selectedMaximum = selectedMaximum;
+    [self refreshWithConsideringStep:NO];
 }
 
 -(void)setMinLabelColour:(UIColor *)minLabelColour{
@@ -585,12 +728,14 @@ static const CGFloat kLabelsFontSize = 12.0f;
     _minLabelFont = minLabelFont;
     self.minLabel.font = (__bridge CFTypeRef)_minLabelFont.fontName;
     self.minLabel.fontSize = _minLabelFont.pointSize;
+    self.minTextField.font = _minLabelFont;
 }
 
 -(void)setMaxLabelFont:(UIFont *)maxLabelFont{
     _maxLabelFont = maxLabelFont;
     self.maxLabel.font = (__bridge CFTypeRef)_maxLabelFont.fontName;
     self.maxLabel.fontSize = _maxLabelFont.pointSize;
+    self.maxTextField.font = _maxLabelFont;
 }
 
 -(void)setNumberFormatterOverride:(NSNumberFormatter *)numberFormatterOverride{
@@ -765,6 +910,103 @@ static const CGFloat kLabelsFontSize = 12.0f;
     element.accessibilityFrame = [self convertRect:self.rightHandle.frame toView:nil];
     element.accessibilityTraits = UIAccessibilityTraitAdjustable;
     return element;
+}
+
+
+#pragma mark - text fields delegate
+-(void)textFieldDidBeginEditing:(UITextField *)textField {
+    self.savedStep = self.step;
+    self.step = 0.5;
+    if ([textField isEqual:self.minTextField]) {
+        self.minLabel.hidden = YES;
+        textField.text = self.minLabel.string;
+    } else {
+        self.maxLabel.hidden = YES;
+        textField.text = self.maxLabel.string;
+    }
+    [self updateLabelPositions];
+    
+    if ([self.delegate respondsToSelector:@selector(didStartManualEditing:)]) {
+       [self.delegate didStartManualEditing:self];
+    }
+    
+}
+
+-(void)textFieldDidEndEditing:(UITextField *)textField {
+    textField.text = @"";
+    if ([textField isEqual:self.minTextField]) {
+        self.minLabel.hidden = NO;
+    } else {
+        self.maxLabel.hidden = NO;
+    }
+    
+    self.step = self.savedStep;
+    [self updateLabelPositions];
+    
+    if ([self.delegate respondsToSelector:@selector(didEndManualEditing:)]) {
+        [self.delegate didEndManualEditing:self];
+    }
+    if (self.selectedMaximum < self.selectedMinimum) {
+        CGFloat max = self.selectedMinimum;
+        self.selectedMaximum = self.selectedMinimum;
+        self.selectedMinimum = max;
+    }
+}
+
+-(void)textFieldValueChanged:(UITextField *)textField {
+    BOOL shouldUppend = NO;
+    BOOL shouldUpdateTextField = YES;
+    NSString *textNumber = [textField.text stringByReplacingOccurrencesOfString:@"[^0-9,.]" withString:@"" options:NSRegularExpressionSearch range:NSMakeRange(0, textField.text.length)];
+    textNumber = [textNumber stringByReplacingOccurrencesOfString:@"," withString:@"."];
+    
+    if (textNumber.floatValue == 0.0) {
+        textField.text = @"";
+        shouldUpdateTextField = NO;
+    }
+    
+    if (textNumber.length > 1) {
+        NSString *lastSimbol = [textNumber substringFromIndex:textNumber.length - 1];
+        if ([lastSimbol isEqualToString:@"."]) {
+            textNumber = [NSString stringWithFormat:@"%@0", textNumber];
+            shouldUppend = YES;
+        }
+    }
+
+    UITextRange *selectedRange = textField.selectedTextRange;
+    NSInteger position = [textField offsetFromPosition:textField.beginningOfDocument toPosition:selectedRange.start];
+    if (position == 0 && textNumber.length == 0) {
+        textField.text = @"0";
+        [textField positionFromPosition:textField.endOfDocument offset:0];
+        selectedRange = textField.selectedTextRange;
+    }
+
+    if ([textField isEqual:self.minTextField]) {
+        CGFloat finishValue = textNumber.floatValue;
+        if (shouldUppend) {
+            finishValue += 0.000001;
+        }
+        self.selectedMinimum = finishValue;
+        textField.text = self.minLabel.string;
+        if (shouldUpdateTextField) {
+            textField.text = self.minLabel.string;
+        }
+    } else {
+        CGFloat finishValue = textNumber.floatValue;
+        if (shouldUppend) {
+            finishValue += 0.000001;
+        }
+        self.selectedMaximum = finishValue;
+        if (shouldUpdateTextField) {
+            textField.text = self.maxLabel.string;
+        }
+        
+    }
+    
+    [textField setSelectedTextRange:selectedRange];
+}
+
+-(void)textFieldDone {
+    [self endEditing:YES];
 }
 
 @end
