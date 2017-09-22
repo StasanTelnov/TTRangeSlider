@@ -454,7 +454,12 @@ static const CGFloat kLabelsFontSize = 12.0f;
         _selectedMinimum = roundf(self.selectedMinimum);
         _selectedMaximum = roundf(self.selectedMaximum);
         if (withConsideringStep) {
-            _selectedMinimum = roundf(_selectedMinimum / self.step) * self.step;
+            float tempMinimum = roundf(_selectedMinimum / self.step) * self.step;
+            if (tempMinimum - self.step < _minValue) {
+                _selectedMinimum = _minValue;
+            } else {
+                _selectedMinimum = tempMinimum;
+            }
             _selectedMaximum = roundf(_selectedMaximum / self.step) * self.step;
         }
         
